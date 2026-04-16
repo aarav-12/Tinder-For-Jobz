@@ -1,15 +1,18 @@
 require("dotenv").config();
 
-const mongoose = require("mongoose");
 const Task = require("../models/Task");
-const axios = require("axios");
-const Job = require("../models/Job");
-// connect DB (reuse your config)
 const connectDB = require("../config/db");
 
-console.log("🚀 Worker started...");
+const { processLeverJobs } = require("../services/lever");
+const { processGreenhouseJobs } = require("../services/greenhouse");
 
-// core worker loop
+console.log("🚀 Worker started...");
+console.log("🧠 Worker loop running...");
+
+async function markTaskAsFailed(taskId) {
+  await Task.findByIdAndUpdate(taskId, { status: "failed" });
+}
+
 const runWorker = async () => {
   while (true) {
     try {
@@ -20,7 +23,6 @@ const runWorker = async () => {
       );
 
       if (!task) {
-        // no work → wait 3 sec
         await new Promise((res) => setTimeout(res, 3000));
         continue;
       }
@@ -28,82 +30,61 @@ const runWorker = async () => {
       console.log("⚙️ Processing task:", task._id);
 
       try {
-        if (task.type === "SYNC_JOBS") {
-          await processSyncJobs(task);
+        if (task.type === "SYNC_GREENHOUSE") {
+          await processGreenhouseJobs(task.payload.company);
+        }
+
+        if (task.type === "SYNC_LEVER") {
+          await processLeverJobs(task.payload.company);
         }
 
         task.status = "completed";
         await task.save();
 
         console.log("✅ Task completed:", task._id);
+        console.log("📊 Task stats:", {
+          id: task._id,
+          attempts: task.attempts,
+          status: task.status
+        });
+
       } catch (err) {
+        const company = task.payload?.company;
+        if (err.response && err.response.status === 404) {
+          console.log("🚫 Invalid company, skipping:", company);
+
+          await markTaskAsFailed(task._id);
+
+          continue; // DO NOT retry
+        }
+
         console.error("❌ Task failed:", err.message);
 
         task.attempts += 1;
 
         if (task.attempts < 3) {
-          task.status = "pending"; // retry
-          console.log("🔁 Retrying task:", task._id);
+          task.status = "pending";
+
+          await new Promise(res => setTimeout(res, 5000));
+
+          console.log("🔁 Retrying task after delay:", task._id);
         } else {
           task.status = "failed";
           console.log("💀 Task permanently failed:", task._id);
         }
 
         await task.save();
+
+        console.log("📊 Task stats:", {
+          id: task._id,
+          attempts: task.attempts,
+          status: task.status
+        });
       }
+
     } catch (err) {
       console.error("❌ Worker error:", err);
     }
-  }
-};
-
-const processSyncJobs = async (task) => {
-  const { company } = task.payload;
-
-  try {
-    console.log(`📦 Fetching jobs for: ${company}`);
-
-    let allJobs = [];
-    let page = 1;
-    let hasMore = true;
-
-    while (hasMore) {
-      const url = `https://boards-api.greenhouse.io/v1/boards/${company}/jobs?page=${page}`;
-
-      const response = await axios.get(url);
-
-      const jobs = response.data.jobs;
-
-      if (!jobs || jobs.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      console.log(`📄 Page ${page}: ${jobs.length} jobs`);
-
-      allJobs = [...allJobs, ...jobs];
-      page++;
-    }
-
-    console.log(`🔢 Total jobs fetched: ${allJobs.length}`);
-
-    for (let job of allJobs) {
-      await Job.findOneAndUpdate(
-        { greenhouseJobId: job.id },
-        {
-          title: job.title,
-          company: company,
-          location: job.location?.name || "N/A",
-          applyUrl: job.absolute_url,
-        },
-        { upsert: true, returnDocument: "after" }
-      );
-    }
-
-    console.log(`✅ Stored all jobs for ${company}`);
-  } catch (err) {
-    console.error("❌ Error fetching jobs:", err.message);
-    throw err;
   }
 };
 

@@ -11,6 +11,12 @@ const jobSchema = new mongoose.Schema({
     required: true,
   },
 
+  source: {
+    type: String,
+    enum: ["greenhouse", "lever"],
+    required: true,
+  },
+
   location: {
     type: String,
     default: "N/A",
@@ -21,12 +27,18 @@ const jobSchema = new mongoose.Schema({
     required: true,
   },
 
-  greenhouseJobId: {
-    type: Number,
-    unique: true, // 🔥 prevents duplicates
+  externalId: {
+    type: String,
+    required: true,
+    unique: true, // 🔥 deduplication backbone
+    index: true,
   },
 
-  // your original fields (keep them)
+  greenhouseJobId: {
+    type: Number,
+  },
+
+  // existing fields
   requiredSkills: {
     type: [String],
     default: [],
@@ -37,7 +49,23 @@ const jobSchema = new mongoose.Schema({
     default: 0,
   },
 
+  // 🔥 NEW — lifecycle management
+  isActive: {
+    type: Boolean,
+    default: true,
+  },
+
+  lastFetchedAt: {
+    type: Date,
+    default: Date.now,
+  },
+
   createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+
+  updatedAt: {
     type: Date,
     default: Date.now,
   },
