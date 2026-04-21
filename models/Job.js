@@ -71,4 +71,6 @@ const jobSchema = new mongoose.Schema({
   },
 });
 
+jobSchema.index({ isActive: 1, minExperience: 1, createdAt: -1 });
+
 module.exports = mongoose.model("Job", jobSchema);
