@@ -1,4 +1,7 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({
+  path: path.resolve(__dirname, "../.env"),
+});
 
 const Task = require("../models/Task");
 const connectDB = require("../config/db");
@@ -83,7 +86,10 @@ const runWorker = async () => {
       }
 
     } catch (err) {
-      console.error("❌ Worker error:", err);
+      console.error("❌ Worker error:", err.message);
+
+      // Prevent tight retry loops that can spam logs and external services.
+      await new Promise((res) => setTimeout(res, 5000));
     }
   }
 };

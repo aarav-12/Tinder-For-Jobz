@@ -1,5 +1,5 @@
 const axios = require("axios");
-const Job = require("../models/job");
+const Job = require("../models/Job");
 
 // cleanup function (move it here from worker)
 async function cleanupOldJobs() {

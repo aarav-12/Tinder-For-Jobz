@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const Task = require("../models/Task");
-const Job = require("../models/job");
-const { getJobFeed } = require("../services/feedService");
+const Job = require("../models/Job");
+const { getFeed } = require("../services/feedService");
 
 // Create a sync job task
 router.post("/sync-jobs", async (req, res) => {
@@ -42,35 +42,18 @@ router.post("/sync-jobs", async (req, res) => {
   }
 });
 
-async function handleJobsFeed(req, res) {
-  console.log("🔥 /api/jobs route hit");
+router.get("/", async (req, res) => {
+  console.log("🔥 /api/jobs HIT");
+
   try {
-    console.log("CandidateId:", req.query.candidateId);
+    const { candidateId, cursor } = req.query;
 
-    const candidateId = req.query.candidateId;
+    const result = await getFeed(candidateId, cursor);
 
-    if (!candidateId) {
-      return res.status(400).json({
-        error: "candidateId is required",
-      });
-    }
-
-    const jobs = await getJobFeed(candidateId);
-
-    res.json({
-      success: true,
-      count: jobs.length,
-      data: jobs,
-    });
-  } catch (error) {
-    console.error("Feed Error:", error.message);
-
-    res.status(500).json({
-      error: "Something went wrong",
-    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-}
-
-router.get("/", handleJobsFeed);
+});
 
 module.exports = router;

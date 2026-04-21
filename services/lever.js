@@ -1,5 +1,5 @@
 const axios = require("axios");
-const Job = require("../models/job");
+const Job = require("../models/Job");
 
 const fetchLeverJobs = async (company) => {
   const url = `https://api.lever.co/v0/postings/${company}`;

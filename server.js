@@ -2,22 +2,17 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const mongoose = require("mongoose");
 
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const jobRoutes = require("./routes/jobRoutes");
+const connectDB = require("./config/db");
 
 const Task = require("./models/Task");
 
 const app = express();
 
 const AUTO_SYNC_COMPANIES = ["stripe", "notion", "airbnb"];
-
-// DB CONNECTION
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.error(err));
 
 // MIDDLEWARE
 app.use(cors());
@@ -107,7 +102,15 @@ async function enqueueAutoSyncTasks() {
 
 setInterval(enqueueAutoSyncTasks, 1000 * 60 * 60);
 
-// SERVER START
-app.listen(5000, () => {
-  console.log("Server running on port 5000");
+async function startServer() {
+  await connectDB();
+
+  app.listen(5000, () => {
+    console.log("Server running on port 5000");
+  });
+}
+
+startServer().catch(err => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
