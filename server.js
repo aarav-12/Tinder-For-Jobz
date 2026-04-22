@@ -9,11 +9,13 @@ const jobRoutes = require("./routes/jobRoutes");
 const connectDB = require("./config/db");
 
 const Task = require("./models/Task");
+const swipeRoutes = require("./routes/swipe");
+
 
 const app = express();
 
 const AUTO_SYNC_COMPANIES = ["stripe", "notion", "airbnb"];
-
+  
 // MIDDLEWARE
 app.use(cors());
 app.use(express.json());
@@ -28,6 +30,7 @@ app.use((err, req, res, next) => {
 
 // ROUTES
 app.use("/api/jobs", jobRoutes);   // → GET /api/jobs
+app.use("/api/swipe", swipeRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
 

@@ -1,9 +1,10 @@
 const mongoose = require("mongoose");
 const User = require("../models/User");
-const Swipe = require("../models/Swipe");
 
 const candidateService = require("./candidateService");
-const { rankJobs } = require("./rankingService");
+const rankingService = require("./rankingService");
+const { getUserSwipes } = require("./swipeService");
+const { buildPreferenceProfile } = require("./preferenceService");
 
 function toObjectId(value) {
   if (value instanceof mongoose.Types.ObjectId) return value;
@@ -34,21 +35,6 @@ async function getUser(candidateId) {
   return user;
 }
 
-async function getUserSwipes(candidateId) {
-  const candidateObjectId = toObjectId(candidateId);
-  if (!candidateObjectId) {
-    throw new Error("Invalid candidate user ID");
-  }
-
-  const swipeDocs = await Swipe.find({ userId: candidateObjectId })
-    .select("jobId")
-    .lean();
-
-  return swipeDocs
-    .map((s) => toObjectId(s.jobId))
-    .filter(Boolean);
-}
-
 const getFeed = async (candidateId, cursor) => {
   if (mongoose.connection.readyState === 0) {
     throw new Error("Database is not connected");
@@ -60,14 +46,22 @@ const getFeed = async (candidateId, cursor) => {
 
   const user = await getUser(candidateId);
   const swipes = await getUserSwipes(candidateId);
+  const preferences = buildPreferenceProfile(swipes);
+  const swipedJobIds = swipes
+    .map((s) => toObjectId(s.jobId))
+    .filter(Boolean);
 
   const candidateJobs = await candidateService.getCandidates({
     user,
-    swipes,
+    swipes: swipedJobIds,
     cursor,
   });
 
-  const rankedJobs = rankJobs(candidateJobs, user);
+  const rankedJobs = rankingService.rankJobs(
+    user,
+    candidateJobs,
+    preferences
+  );
 
   const topJobs = rankedJobs.slice(0, 20);
 

@@ -1,18 +1,43 @@
 const computeMatchScore = require("../utils/matchScore");
 
-function rankJobs(jobs, candidate) {
+const computeRecencyScore = (job) => {
   const now = new Date();
 
+  const daysOld =
+    (now - new Date(job.createdAt)) / (1000 * 60 * 60 * 24);
+
+  return Math.max(0, 1 - daysOld / 30);
+};
+
+const computeFinalScore = (job, user, preferences) => {
+  const baseScore = computeMatchScore(user, job);
+  const recencyScore = computeRecencyScore(job);
+
+  let behaviorBoost = 0;
+
+  const jobId = job._id.toString();
+
+  // boost liked jobs
+  if (preferences.liked.has(jobId)) {
+    behaviorBoost += 0.2;
+  }
+
+  // penalize disliked jobs
+  if (preferences.disliked.has(jobId)) {
+    behaviorBoost -= 0.3;
+  }
+
+  return baseScore * 0.6 + recencyScore * 0.3 + behaviorBoost;
+};
+
+const rankJobs = (user, jobs, preferences) => {
+  const safePreferences = preferences ?? {
+    liked: new Set(),
+    disliked: new Set(),
+  };
+
   const scoredJobs = jobs.map((job) => {
-    const baseScore = computeMatchScore(candidate, job);
-
-    // 🔥 add recency boost
-    const daysOld =
-      (now - new Date(job.createdAt)) / (1000 * 60 * 60 * 24);
-
-    const recencyScore = Math.max(0, 1 - daysOld / 30);
-
-    const finalScore = baseScore * 0.7 + recencyScore * 0.3;
+    const finalScore = computeFinalScore(job, user, safePreferences);
 
     return {
       ...job,
