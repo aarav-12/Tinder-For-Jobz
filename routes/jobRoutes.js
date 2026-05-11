@@ -3,6 +3,8 @@ const router = express.Router();
 const Task = require("../models/Task");
 const Job = require("../models/Job");
 const { getFeed } = require("../services/feedService");
+const rateLimiter =
+  require("../middleware/rateLimiter");
 
 // Create a sync job task
 router.post("/sync-jobs", async (req, res) => {
@@ -42,7 +44,7 @@ router.post("/sync-jobs", async (req, res) => {
   }
 });
 
-router.get("/", async (req, res) => {
+router.get("/", rateLimiter, async (req, res) => {
   console.log("🔥 /api/jobs HIT");
 
   try {
