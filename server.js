@@ -7,6 +7,7 @@ const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const jobRoutes = require("./routes/jobRoutes");
 const connectDB = require("./config/db");
+const { connectRedis } = require("./src/config/redisClient");
 
 const Task = require("./models/Task");
 const swipeRoutes = require("./routes/swipe");
@@ -19,6 +20,25 @@ const AUTO_SYNC_COMPANIES = ["stripe", "notion", "airbnb"];
 // MIDDLEWARE
 app.use(cors());
 app.use(express.json());
+
+// Previous version kept for reference:
+// app.get("/test-redis", async (req, res) => {
+//   const { redisClient } = require("./config/redisClient");
+//
+//   await redisClient.set("testKey", "helloRedis");
+//   const value = await redisClient.get("testKey");
+//
+//   res.json({ value });
+// });
+
+app.get("/test-redis", async (req, res) => {
+  const { redisClient } = require("./src/config/redisClient");
+
+  await redisClient.set("testKey", "helloRedis");
+  const value = await redisClient.get("testKey");
+
+  res.json({ value });
+});
 
 // Handle bad JSON (your earlier error)
 app.use((err, req, res, next) => {
@@ -107,9 +127,10 @@ setInterval(enqueueAutoSyncTasks, 1000 * 60 * 60);
 
 async function startServer() {
   await connectDB();
+  await connectRedis();
 
   app.listen(5000, () => {
-    console.log("Server running on port 5000");
+    console.log("🚀 Server running on port 5000");
   });
 }
 

@@ -1,4 +1,5 @@
 const Swipe = require("../models/Swipe");
+const { redisClient } = require("../config/redisClient");
 
 const swipeJob = async (req, res) => {
   try {
@@ -23,6 +24,68 @@ const swipeJob = async (req, res) => {
         setDefaultsOnInsert: true
       }
     );
+
+    const swipeKey = `swipes:${candidateId.toString()}`;
+
+    let sessionSwipes = {
+      liked: [],
+      disliked: []
+    };
+
+    try {
+      const existing = await redisClient.get(swipeKey);
+      const normalizedJobId = jobId.toString();
+
+      if (existing) {
+        sessionSwipes = JSON.parse(existing);
+      }
+
+      if (!Array.isArray(sessionSwipes.liked)) {
+        sessionSwipes.liked = [];
+      }
+
+      if (!Array.isArray(sessionSwipes.disliked)) {
+        sessionSwipes.disliked = [];
+      }
+
+      if (action === "like") {
+        if (!sessionSwipes.liked.some((id) => id.toString() === normalizedJobId)) {
+          sessionSwipes.liked.push(normalizedJobId);
+        }
+      } else {
+        if (!sessionSwipes.disliked.some((id) => id.toString() === normalizedJobId)) {
+          sessionSwipes.disliked.push(normalizedJobId);
+        }
+      }
+
+      await redisClient.setEx(
+        swipeKey,
+        300, // 5 minutes
+        JSON.stringify(sessionSwipes)
+      );
+
+      console.log("⚡ Swipe cached in session:", swipeKey);
+
+    } catch (err) {
+      console.error("❌ Swipe session cache failed:", err);
+    }
+
+    // Previous invalidation approach kept for reference:
+    // await redisClient.del(`feed:${candidateId}`);
+
+    const userId = candidateId.toString();
+    const pattern = `feed:${userId}:*`;
+
+    try {
+      const keys = await redisClient.keys(pattern);
+
+      if (keys.length > 0) {
+        await redisClient.del(keys);
+        console.log(`🧹 Cache cleared for user: ${userId}`);
+      }
+    } catch (err) {
+      console.error("Cache invalidation failed:", err);
+    }
 
     res.json({
       success: true,
