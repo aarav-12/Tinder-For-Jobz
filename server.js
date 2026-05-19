@@ -6,6 +6,7 @@ const cors = require("cors");
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const jobRoutes = require("./routes/jobRoutes");
+const ingestionRoutes = require("./src/routes/ingestionRoutes");
 const connectDB = require("./config/db");
 const { connectRedis } = require("./src/config/redisClient");
 
@@ -49,7 +50,8 @@ app.use((err, req, res, next) => {
 });
 
 // ROUTES
-app.use("/api/jobs", jobRoutes);   // → GET /api/jobs
+app.use("/api/jobs", ingestionRoutes); // → POST /api/jobs/bulk
+app.use("/api/jobs", jobRoutes);       // → GET /api/jobs
 app.use("/api/swipe", swipeRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
