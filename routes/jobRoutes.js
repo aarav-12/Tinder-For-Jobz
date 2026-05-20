@@ -29,13 +29,22 @@ router.post("/sync-jobs", async (req, res) => {
       return res.json({ message: "Task already in progress" });
     }
 
+    // Enqueue via BullMQ and persist a Task record for observability
+    const taskQueueService = require("../src/services/taskQueueService");
+
+    const jobMeta = await taskQueueService.enqueueTask("SYNC_GREENHOUSE", { company });
+
     const task = await Task.create({
       type: "SYNC_GREENHOUSE",
+      status: "pending",
+      attempts: 0,
       payload: { company },
+      jobId: String(jobMeta.id)
     });
 
     res.json({
       message: "Job sync started",
+      jobId: jobMeta.id,
       taskId: task._id,
     });
   } catch (err) {
