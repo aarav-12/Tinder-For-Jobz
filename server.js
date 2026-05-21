@@ -185,34 +185,43 @@ app.post("/api/tasks/sync-jobs", async (req, res) => {
 async function enqueueAutoSyncTasks() {
   console.log("⏰ Auto-triggering job sync...");
 
+  const taskQueueService = require("./src/services/taskQueueService");
+
   for (const company of AUTO_SYNC_COMPANIES) {
-    const existing = await Task.findOne({
-      type: "SYNC_GREENHOUSE",
-      "payload.company": company,
-      status: { $in: ["pending", "running"] }
-    });
+    try {
+      const existing = await Task.findOne({
+        type: "SYNC_GREENHOUSE",
+        "payload.company": company,
+        status: { $in: ["pending", "running"] }
+      });
 
-    if (existing) {
-      console.log(`⏭️ Skipping ${company}, task already in progress`);
-      continue;
+      if (existing) {
+        console.log(`⏭️ Skipping ${company}, task already in progress`);
+        continue;
+      }
+
+      const jobMeta = await taskQueueService.enqueueTask("SYNC_GREENHOUSE", { company });
+
+      await Task.create({
+        type: "SYNC_GREENHOUSE",
+        status: "pending",
+        attempts: 0,
+        payload: { company },
+        jobId: String(jobMeta.id)
+      });
+
+      console.log(`✅ Queued auto sync for ${company} (job ${jobMeta.id})`);
+    } catch (err) {
+      console.error(`❌ Auto sync failed for ${company}:`, err.message);
     }
-
-    const taskQueueService = require("./src/services/taskQueueService");
-    const jobMeta = await taskQueueService.enqueueTask("SYNC_GREENHOUSE", { company });
-
-    await Task.create({
-      type: "SYNC_GREENHOUSE",
-      status: "pending",
-      attempts: 0,
-      payload: { company },
-      jobId: String(jobMeta.id)
-    });
-
-    console.log(`✅ Queued auto sync for ${company} (job ${jobMeta.id})`);
   }
 }
 
-setInterval(enqueueAutoSyncTasks, 1000 * 60 * 60);
+setInterval(() => {
+  enqueueAutoSyncTasks().catch((err) => {
+    console.error("❌ Auto sync loop failed:", err.message);
+  });
+}, 1000 * 60 * 60);
 
 async function startServer() {
   await connectDB();
