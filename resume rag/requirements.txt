@@ -1,0 +1,23 @@
+# ── Web framework ────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9          # Required for FastAPI file uploads
+
+# ── Configuration ────────────────────────────────────────────────────────────
+pydantic-settings==2.2.1         # env var loading + validation
+
+# ── PDF extraction ───────────────────────────────────────────────────────────
+pdfplumber==0.11.0               # PDF text + table extraction
+
+# ── HTTP client ──────────────────────────────────────────────────────────────
+httpx==0.27.0                    # Async HTTP (OpenAI, Ollama calls)
+
+# ── Vector DB ────────────────────────────────────────────────────────────────
+# WHY pinecone-client (not chromadb, not weaviate-client):
+#   - Managed service, no local vector DB infra needed
+#   - Metadata filtering during retrieval (not after)
+#   - Simple SDK: upsert + query
+pinecone-client==5.0.1
+
+# ── Numerical ────────────────────────────────────────────────────────────────
+numpy==1.26.4                    # Required by pinecone for vector operations
