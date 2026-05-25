@@ -1,13 +1,20 @@
 const Redis = require("ioredis");
 
+let hasConnectedRedis = false;
+
 const redisClient = new Redis({
   host: process.env.REDIS_HOST || "127.0.0.1",
   port: Number(process.env.REDIS_PORT || 6379),
-  maxRetriesPerRequest: null
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+  retryStrategy: () => null,
+  connectTimeout: Number(process.env.REDIS_CONNECT_TIMEOUT || 1000)
 });
 
 redisClient.on("error", (err) => {
-  console.error("❌ Redis Error:", err);
+  if (hasConnectedRedis) {
+    console.error("❌ Redis Error:", err.message || err);
+  }
 });
 
 if (typeof redisClient.setEx !== "function" && typeof redisClient.setex === "function") {
@@ -17,33 +24,21 @@ if (typeof redisClient.setEx !== "function" && typeof redisClient.setex === "fun
 const connectRedis = async () => {
   try {
     if (redisClient.status === "ready") {
+      hasConnectedRedis = true;
       console.log("Redis connected");
       return;
     }
 
-    await new Promise((resolve, reject) => {
-      const cleanup = () => {
-        redisClient.off("ready", onReady);
-        redisClient.off("error", onError);
-      };
-
-      const onReady = () => {
-        cleanup();
-        resolve();
-      };
-
-      const onError = (err) => {
-        cleanup();
-        reject(err);
-      };
-
-      redisClient.once("ready", onReady);
-      redisClient.once("error", onError);
-    });
-
+    await redisClient.connect();
+    hasConnectedRedis = true;
     console.log("Redis connected");
   } catch (err) {
-    console.error("Redis connection failed:", err);
+    hasConnectedRedis = false;
+    try {
+      redisClient.disconnect();
+    } catch (_) {
+      // Ignore disconnect cleanup errors.
+    }
   }
 };
 

@@ -1,4 +1,4 @@
-const jobQueue = require("../queues/jobQueue");
+const getJobQueue = require("../queues/jobQueue");
 
 /**
  * Enqueue a task into BullMQ and return job metadata.
@@ -6,7 +6,7 @@ const jobQueue = require("../queues/jobQueue");
  * @param {object} payload - self-contained payload for worker
  */
 const enqueueTask = async (taskType, payload) => {
-  const job = await jobQueue.add(taskType, payload, {
+  const job = await getJobQueue().add(taskType, payload, {
     removeOnComplete: true,
     removeOnFail: false
   });

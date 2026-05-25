@@ -225,7 +225,6 @@ setInterval(() => {
 
 async function startServer() {
   await connectDB();
-  await connectRedis();
 
   const port = process.env.PORT || 5000;
 

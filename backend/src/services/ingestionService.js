@@ -1,7 +1,7 @@
-const jobQueue = require("../queues/jobQueue");
+const getJobQueue = require("../queues/jobQueue");
 
 const enqueueJobIngestion = async (jobs, uploadedBy) => {
-  const job = await jobQueue.add(
+  const job = await getJobQueue().add(
     "bulk-job-ingestion",
     {
       jobs,

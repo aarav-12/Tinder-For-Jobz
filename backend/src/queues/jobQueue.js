@@ -3,8 +3,16 @@
 const { Queue } = require("bullmq");
 const redisClient = require("../config/redisClient");
 
-const jobQueue = new Queue("job-processing", {
-  connection: redisClient
-});
+let jobQueue;
 
-module.exports = jobQueue;
+const getJobQueue = () => {
+  if (!jobQueue) {
+    jobQueue = new Queue("job-processing", {
+      connection: redisClient
+    });
+  }
+
+  return jobQueue;
+};
+
+module.exports = getJobQueue;
