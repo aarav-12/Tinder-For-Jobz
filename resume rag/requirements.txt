@@ -21,3 +21,12 @@ pinecone-client==5.0.1
 
 # ── Numerical ────────────────────────────────────────────────────────────────
 numpy==1.26.4                    # Required by pinecone for vector operations
+
+# ── NOTE: BM25 ───────────────────────────────────────────────────────────────
+# We implemented BM25 from scratch in bm25_retriever.py (no external dep).
+# WHY: rank_bm25 library is a thin wrapper around the same math.
+#      Rolling our own gives us:
+#        - Incremental document addition (rank_bm25 requires full corpus rebuild)
+#        - TTL-based stale doc handling (not in rank_bm25)
+#        - Custom stopword list for tech/job domain
+#        - No additional dependency = one less thing to break in prod
