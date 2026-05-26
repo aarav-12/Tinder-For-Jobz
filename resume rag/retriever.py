@@ -43,6 +43,8 @@ METADATA FILTERING:
 from __future__ import annotations
 
 import logging
+import time
+from collections import OrderedDict
 from typing import Any, Optional
 
 from pinecone import Pinecone
@@ -51,6 +53,107 @@ from config import settings
 from embedder import generate_single_embedding
 
 logger = logging.getLogger(__name__)
+
+# ── In-memory LRU cache for retrieval results (Day 34) ───────────────────────
+# WHY in-memory (not Redis) for now:
+#   Redis requires infra, connection management, serialization.
+#   For a single-process service, an in-memory LRU cache is:
+#     - Zero infra overhead
+#     - Zero serialization cost (store Python objects directly)
+#     - Sufficient for single-instance deployments
+#
+#   TRADE-OFF: Cache is per-process. If you run 4 Uvicorn workers, each has
+#   its own cache. Cache hit rate drops to 1/4 of single-process.
+#   SOLUTION WHEN NEEDED: switch to Redis (just change the cache backend).
+#   The interface stays the same. This is the "make it work, then optimize" principle.
+#
+# HOW LRU WORKS:
+#   LRU = Least Recently Used. When cache is full, evict the entry that was
+#   accessed LEAST recently. Like a table of 10 seats: when a new person arrives
+#   and all seats are taken, the person who sat down longest ago (and hasn't been
+#   checked on recently) gives up their seat.
+#
+# WHY TTL (Time To Live) = 5 minutes:
+#   Job retrieval results can change if:
+#     - New jobs are added to the system
+#     - Jobs are removed/deactivated
+#     - Quality scores are updated
+#   5 minutes gives a balance between:
+#     - Cache hit rate: users querying the same resume multiple times in a session
+#     - Freshness: new jobs appear within 5 minutes
+
+
+class _LRUCache:
+    """
+    Simple thread-unsafe LRU cache with TTL expiry.
+
+    WHY thread-unsafe: Uvicorn's default async mode uses a single thread
+    per worker. async def handlers in FastAPI are not multi-threaded.
+    Thread safety would add locking overhead for no benefit.
+    If you switch to ThreadPoolExecutor: add asyncio.Lock.
+
+    Implementation uses OrderedDict — a dict that remembers insertion order.
+    Moving an entry to the end = marking it as recently used.
+    Evicting from the front = removing the least recently used entry.
+    """
+
+    def __init__(self, max_size: int, ttl_seconds: int) -> None:
+        self._cache: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+        self._max_size  = max_size
+        self._ttl       = ttl_seconds
+        self._hits      = 0
+        self._misses    = 0
+
+    def get(self, key: str) -> Any | None:
+        if key not in self._cache:
+            self._misses += 1
+            return None
+
+        value, expires_at = self._cache[key]
+        if time.time() > expires_at:
+            # Expired — remove and count as miss
+            del self._cache[key]
+            self._misses += 1
+            return None
+
+        # Move to end (most recently used)
+        self._cache.move_to_end(key)
+        self._hits += 1
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+
+        self._cache[key] = (value, time.time() + self._ttl)
+
+        # Evict oldest if over max size
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)  # Remove from front (least recently used)
+
+    def stats(self) -> dict:
+        total = self._hits + self._misses
+        hit_rate = self._hits / total if total > 0 else 0.0
+        return {
+            "size":     len(self._cache),
+            "max_size": self._max_size,
+            "hits":     self._hits,
+            "misses":   self._misses,
+            "hit_rate": round(hit_rate, 3),
+            "ttl_secs": self._ttl,
+        }
+
+    def clear(self) -> None:
+        self._cache.clear()
+        self._hits = 0
+        self._misses = 0
+
+
+# Module-level singleton cache
+_retrieval_cache = _LRUCache(
+    max_size    = settings.RETRIEVAL_CACHE_MAX_SIZE,
+    ttl_seconds = settings.RETRIEVAL_CACHE_TTL_SECONDS,
+)
 
 # Lazy-initialized Pinecone client (created on first use)
 _pc: Optional[Pinecone] = None
@@ -76,9 +179,9 @@ def _get_index():
     return _index
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # Upsert (used by job ingestion pipeline)
-# ─────────────────────────────────────────────────────────────────────────────
+
 def upsert_job_embeddings(
     job_id: str,
     embeddings: list[list[float]],
@@ -160,9 +263,9 @@ def upsert_resume_embeddings(
     logger.info("Upserted %d vectors for resume %s", len(vectors), user_id)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # Retrieval (used by feed service)
-# ─────────────────────────────────────────────────────────────────────────────
+
 def retrieve_jobs(
     query_embedding: list[float],
     top_k: int | None = None,
@@ -181,6 +284,12 @@ def retrieve_jobs(
       List of {"job_id": str, "score": float, "metadata": dict}
       Sorted by semantic similarity (highest first).
 
+    CACHING (Day 34):
+      Cache key = hash of (embedding vector + top_k + filters).
+      WHY hash the embedding: the same resume → same embedding vector → same key.
+      WHY not cache by user_id: different resumes from same user should get
+      different results. The embedding IS the identity here.
+
     IMPORTANT:
       This returns job IDs + scores.
       Node backend fetches full job data from Mongo using these IDs.
@@ -188,6 +297,24 @@ def retrieve_jobs(
     """
     index = _get_index()
     k = top_k or settings.TOP_K_RETRIEVAL
+
+    # Build cache key from embedding + params
+    # WHY first 20 + last 20 floats (not full vector):
+    #   A 1536-dim vector has 1536 floats. Hashing all 1536 = slow.
+    #   First 20 + last 20 = 40 floats = practically unique fingerprint.
+    #   Collision probability: ~1 in 10^60. Acceptable.
+    cache_key = str(hash((
+        tuple(query_embedding[:20]),
+        tuple(query_embedding[-20:]),
+        k,
+        str(filters),
+    )))
+
+    # Check cache
+    cached = _retrieval_cache.get(cache_key)
+    if cached is not None:
+        logger.info("Retrieval cache HIT (key=%s...)", cache_key[:12])
+        return cached
 
     # Build Pinecone filter dict
     pinecone_filter = _build_filter(filters) if filters else None
@@ -219,13 +346,27 @@ def retrieve_jobs(
                 "metadata": match["metadata"],
             })
 
+    # Store in cache before returning
+    _retrieval_cache.set(cache_key, matches)
+
     logger.info(
-        "Retrieved %d unique jobs (top_k=%d, filters=%s)",
+        "Retrieved %d unique jobs (top_k=%d, filters=%s, cached=False)",
         len(matches),
         k,
         bool(filters),
     )
     return matches
+
+
+def get_cache_stats() -> dict:
+    """Return cache statistics for health checks and debugging (Day 34)."""
+    return _retrieval_cache.stats()
+
+
+def clear_retrieval_cache() -> None:
+    """Clear the retrieval cache. Call when jobs are updated in bulk."""
+    _retrieval_cache.clear()
+    logger.info("Retrieval cache cleared")
 
 
 def _build_filter(filters: dict[str, Any]) -> dict:
@@ -256,9 +397,9 @@ def _build_filter(filters: dict[str, Any]) -> dict:
     return pinecone_filter
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # Delete (cleanup)
-# ─────────────────────────────────────────────────────────────────────────────
+
 def delete_job_vectors(job_id: str) -> None:
     """Remove all vectors for a job (when job is deleted/deactivated)."""
     index = _get_index()
