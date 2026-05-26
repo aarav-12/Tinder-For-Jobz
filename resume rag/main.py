@@ -59,18 +59,20 @@ app = FastAPI(
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Health check
-# ─────────────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     """Liveness probe — Render/K8s uses this."""
-    return {"status": "ok", "service": "resume-pipeline"}
+    from bm25_retriever import get_index_stats
+    bm25 = get_index_stats()
+    return {
+        "status": "ok",
+        "service": "resume-pipeline",
+        "bm25_jobs_indexed": bm25["document_count"],
+    }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Resume analysis endpoint
-# ─────────────────────────────────────────────────────────────────────────────
 @app.post("/analyze")
 async def analyze(
     file: UploadFile = File(...),
@@ -144,9 +146,7 @@ async def analyze(
     return JSONResponse(content=result, status_code=200)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Retrieval endpoint
-# ─────────────────────────────────────────────────────────────────────────────
 class RetrievalRequest(BaseModel):
     """
     Request body for semantic job retrieval.
@@ -155,21 +155,33 @@ class RetrievalRequest(BaseModel):
       - Validates at the door (bad request → 422, not 500 deep in pipeline)
       - Auto-documents in OpenAPI schema
       - Type safety without manual checking
+
+    UPDATED (Day 31): added candidate_skills + experience_years for ranking.
     """
     query: str
     top_k: int | None = None
     filters: dict | None = None
+    # Day 31: Candidate context for ranking
+    candidate_skills: list[str] | None = None
+    experience_years: float = 0.0
+    # Day 30: A/B test flag
+    use_hybrid: bool = True
 
 
 @app.post("/retrieve")
 async def retrieve(req: RetrievalRequest):
     """
-    Semantic job retrieval.
+    Semantic job retrieval — hybrid BM25 + dense, reranked to top 20.
+
+    Updated (Day 30-31):
+      - Hybrid retrieval (BM25 + embeddings via RRF)
+      - Reranking with skill overlap, experience, quality, recency signals
+      - Returns top 20 (not 200) — ranked by final_score
 
     Called by Node backend's feedService:
-      resume embedding → Pinecone ANN → top-K job matches
+      resume embedding → hybrid retrieval → ranked top 20
 
-    Returns job IDs + similarity scores.
+    Returns job IDs + scores + ranking details.
     Node backend fetches full job data from Mongo.
     """
     if not req.query or len(req.query.strip()) < 10:
@@ -178,7 +190,14 @@ async def retrieve(req: RetrievalRequest):
             detail="Query text must be at least 10 characters",
         )
 
-    result = run_retrieval(req.query, top_k=req.top_k, filters=req.filters)
+    result = run_retrieval(
+        query_text                 = req.query,
+        top_k                      = req.top_k,
+        filters                    = req.filters,
+        candidate_skills           = req.candidate_skills,
+        candidate_experience_years = req.experience_years,
+        use_hybrid                 = req.use_hybrid,
+    )
 
     if "error" in result and not result.get("matches"):
         return JSONResponse(content=result, status_code=500)
@@ -186,9 +205,7 @@ async def retrieve(req: RetrievalRequest):
     return JSONResponse(content=result, status_code=200)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Job embedding endpoint
-# ─────────────────────────────────────────────────────────────────────────────
 class JobEmbedRequest(BaseModel):
     """
     Request body for job embedding ingestion.
@@ -238,11 +255,24 @@ async def embed_job(req: JobEmbedRequest):
             },
         )
 
+        # ── Also index in BM25 (Day 30) ───────────────────────────────────
+        # WHY here (not in a separate call): the BM25 index needs the same data
+        # as Pinecone. Doing it atomically in the same endpoint ensures the two
+        # indexes stay in sync — a job always appears in both or neither.
+        from bm25_retriever import index_job
+        index_job(
+            job_id      = req.job_id,
+            title       = req.title,
+            skills      = req.skills,
+            description = req.description,
+        )
+
         return JSONResponse(
             content={
                 "job_id": req.job_id,
                 "embedded": True,
                 "vector_count": len(embeddings),
+                "bm25_indexed": True,
             },
             status_code=200,
         )
@@ -255,9 +285,119 @@ async def embed_job(req: JobEmbedRequest):
         )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# Quality scoring endpoint (Day 33)
+class QualityScoreRequest(BaseModel):
+    job_id: str
+    title: str
+    skills: list[str] = []
+    description: str = ""
+
+
+@app.post("/score-job-quality")
+async def score_job_quality(req: QualityScoreRequest):
+    """
+    Score a job posting for quality using LLM evaluation.
+
+    Called when a job is created or updated.
+    Returns a quality_score [0, 1] + dimension breakdown.
+    Score is stored in MongoDB by the Node backend and passed to Pinecone
+    metadata on next upsert — used by ranker as a ranking signal.
+
+    WHY a separate endpoint (not inline in embed-job):
+      Quality scoring takes 1-3s (LLM call). Embedding is ~200ms.
+      Separating allows Node backend to:
+        - Embed synchronously (fast, blocking)
+        - Quality score asynchronously (slow, via BullMQ worker)
+      This is the same pattern as the async embedding queue in Day 34.
+    """
+    from quality_scorer import score_job_quality as _score
+
+    result = _score(
+        job_id      = req.job_id,
+        title       = req.title,
+        skills      = req.skills,
+        description = req.description,
+    )
+    return JSONResponse(content=result, status_code=200)
+
+
+# "Why this job" explanation endpoint (Day 32)
+class ExplainRequest(BaseModel):
+    job_data: dict           # {title, skills, description}
+    candidate_data: dict     # {skills, experience_years, domain_coverage}
+    ranking_details: dict    # from ranker.rerank() output
+
+
+@app.post("/explain-match")
+async def explain_match(req: ExplainRequest):
+    """
+    Generate a human-readable explanation of why a job matches a candidate.
+
+    RAG pattern: LLM generates explanation GROUNDED in retrieval data.
+    LLM does not decide what's relevant — it only explains what our
+    structured ranking system already computed.
+
+    Called by Node backend when user taps "Why this job?" on a match.
+    Not called automatically for all 20 results — lazy on demand.
+    """
+    from explainer import explain_match as _explain
+
+    explanation = _explain(
+        job_data        = req.job_data,
+        candidate_data  = req.candidate_data,
+        ranking_details = req.ranking_details,
+    )
+    return JSONResponse(content={"explanation": explanation}, status_code=200)
+
+
+# Debug / analytics endpoint (Day 35)
+@app.get("/debug/retrieval-stats")
+async def retrieval_debug_stats():
+    """
+    Retrieval system health and performance stats.
+
+    Returns:
+      - BM25 index stats (document count, term count, avg doc length)
+      - Retrieval cache stats (hit rate, size, TTL)
+      - Config snapshot (alpha, top_k, rerank_k)
+
+    WHY this endpoint exists:
+      Debugging retrieval quality requires knowing system state.
+      "Why is job X ranked #5 and not #1?" starts with understanding
+      what signals the system has available.
+
+      This is the observability layer — same principle as metrics dashboards
+      in production systems. You can't improve what you can't measure.
+    """
+    from bm25_retriever import get_index_stats
+    from retriever import get_cache_stats
+    from config import settings
+
+    return JSONResponse(content={
+        "bm25_index":       get_index_stats(),
+        "retrieval_cache":  get_cache_stats(),
+        "config": {
+            "hybrid_alpha":     settings.HYBRID_ALPHA,
+            "top_k_retrieval":  settings.TOP_K_RETRIEVAL,
+            "top_k_rerank":     settings.TOP_K_RERANK,
+            "cache_ttl_secs":   settings.RETRIEVAL_CACHE_TTL_SECONDS,
+            "min_quality_score": settings.MIN_QUALITY_SCORE,
+        },
+    }, status_code=200)
+
+
+@app.post("/debug/clear-cache")
+async def clear_retrieval_cache():
+    """
+    Clear the retrieval cache. Use after bulk job updates.
+    Exposed as endpoint so Node backend can trigger it without restarting service.
+    """
+    from retriever import clear_retrieval_cache as _clear
+    _clear()
+    return JSONResponse(content={"cleared": True}, status_code=200)
+
+
 # Render-compatible entry point
-# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
