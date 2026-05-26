@@ -38,6 +38,7 @@ from extractor import extract_resume
 from normalizer import normalize_skills, map_to_domains
 from chunker import chunk_resume
 from embedder import is_configured as openai_configured, generate_embeddings, generate_single_embedding
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +102,19 @@ def run_pipeline(pdf_path: str, user_id: str | None = None) -> dict[str, Any]:
     normalized     = normalize_skills(skills)
     domain_coverage = map_to_domains(skills)
 
+    # Extract canonical skills for ranking (Day 31)
+    canonical_skills = [n["canonical"] for n in normalized if n["canonical"]]
+
+    # Estimate total experience years for ranking (Day 31)
+    from ranker import estimate_experience_years
+    experience_years = estimate_experience_years(experience)
+
     logger.info(
-        "Stage 3 complete: %d/%d skills recognized, %d domains",
+        "Stage 3 complete: %d/%d skills recognized, %d domains, %.1f years exp",
         sum(1 for n in normalized if n["canonical"]),
         len(normalized),
         len(domain_coverage),
+        experience_years,
     )
 
     # ── Stage 4: semantic chunking ───────────────────────────────────────
@@ -116,6 +125,8 @@ def run_pipeline(pdf_path: str, user_id: str | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {
         "extraction":          extraction,
         "normalized_skills":   normalized,
+        "canonical_skills":    canonical_skills,          # Day 31: for ranking
+        "experience_years":    experience_years,           # Day 31: for ranking
         "domain_coverage":     domain_coverage,
         "chunks":              [{"text": c["text"], "type": c["type"]} for c in chunks],
         "chunk_count":         len(chunks),
@@ -190,9 +201,30 @@ def run_retrieval(
     query_text: str,
     top_k:  int  | None = None,
     filters: dict | None = None,
+    candidate_skills: list[str] | None = None,
+    candidate_experience_years: float = 0.0,
+    use_hybrid: bool = True,
 ) -> dict[str, Any]:
     """
-    Retrieval pipeline: query text → embedding → Pinecone ANN → job matches.
+    Retrieval pipeline: query text → embedding → hybrid search → rerank → top 20.
+
+    ARCHITECTURE CHANGE (Day 30-31):
+      OLD: query_text → dense embedding → Pinecone ANN → top 200
+      NEW: query_text → dense embedding → BM25 + dense (hybrid/RRF) → top 200
+                      → ranker (skill + exp + quality + recency) → top 20
+
+    WHY two-stage (retrieve 200 → rank to 20):
+      Stage 1 (retrieval): maximize RECALL — don't miss good candidates.
+      Stage 2 (ranking): maximize PRECISION — surface the BEST candidates.
+      This is how every production search system works (Google, Amazon, Netflix).
+
+    Args:
+      query_text:                  Resume text or user query for retrieval
+      top_k:                       Number of retrieval candidates (default 200)
+      filters:                     Pinecone metadata filters
+      candidate_skills:            Canonical skills for ranking (from normalizer)
+      candidate_experience_years:  Years of experience for ranking
+      use_hybrid:                  If False, falls back to dense-only (for A/B testing)
 
     Returns {"matches": [...], "count": int} on success.
     Returns {"error": str, "matches": [], "skip_reason": str} on failure.
@@ -217,10 +249,43 @@ def run_retrieval(
         }
 
     try:
-        from retriever import retrieve_jobs
+        # ── Stage 1: Hybrid or dense retrieval ────────────────────────────
+        if use_hybrid:
+            from hybrid_retriever import hybrid_retrieve
+            raw_matches = hybrid_retrieve(
+                query_text      = query_text,
+                query_embedding = query_embedding,
+                top_k           = top_k,
+                filters         = filters,
+            )
+            retrieval_method = "hybrid"
+        else:
+            # Dense-only fallback (used for A/B testing comparison)
+            from retriever import retrieve_jobs
+            raw_matches = retrieve_jobs(query_embedding, top_k=top_k, filters=filters)
+            retrieval_method = "dense"
 
-        matches = retrieve_jobs(query_embedding, top_k=top_k, filters=filters)
-        return {"matches": matches, "count": len(matches)}
+        # ── Stage 2: Rerank top 200 → top 20 ──────────────────────────────
+        if raw_matches and candidate_skills is not None:
+            from ranker import rerank
+            ranked_matches = rerank(
+                candidates                = raw_matches,
+                candidate_skills          = candidate_skills,
+                candidate_experience_years = candidate_experience_years,
+                top_n                     = settings.TOP_K_RERANK,
+            )
+            reranked = True
+        else:
+            # No candidate context for ranking — return retrieval results directly
+            ranked_matches = raw_matches[:settings.TOP_K_RERANK]
+            reranked = False
+
+        return {
+            "matches":          ranked_matches,
+            "count":            len(ranked_matches),
+            "retrieval_method": retrieval_method,
+            "reranked":         reranked,
+        }
 
     except ValueError as exc:
         return {
