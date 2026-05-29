@@ -45,6 +45,12 @@ const getFeed = async (candidateId, cursor) => {
     throw new Error("Invalid cursor");
   }
 
+  try {
+    await redisClient.hincrby("analytics:feed_opened", "count", 1);
+  } catch (err) {
+    console.error("Analytics update failed:", err.message);
+  }
+
   const user = await getUser(candidateId);
   // Previous cache key/read logic kept for reference:
   // const cacheKey = `feed:${user._id}`;
@@ -121,7 +127,7 @@ const getFeed = async (candidateId, cursor) => {
     cursor,
   });
 
-  const rankedJobs = rankingService.rankJobs(
+  const rankedJobs = await rankingService.rankJobs(
     user,
     candidateJobs,
     preferences

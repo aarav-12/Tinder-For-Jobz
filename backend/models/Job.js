@@ -27,6 +27,12 @@ const jobSchema = new mongoose.Schema({
     required: true,
   },
 
+  category: {
+    type: String,
+    default: "General",
+    index: true,
+  },
+
   externalId: {
     type: String,
     required: true,
@@ -71,6 +77,6 @@ const jobSchema = new mongoose.Schema({
   },
 });
 
-jobSchema.index({ isActive: 1, minExperience: 1, createdAt: -1 });
+jobSchema.index({ isActive: 1, category: 1, minExperience: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Job", jobSchema);

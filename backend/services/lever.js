@@ -1,5 +1,6 @@
 const axios = require("axios");
 const Job = require("../models/Job");
+const { deriveJobCategory } = require("../utils/jobCategory");
 
 const fetchLeverJobs = async (company) => {
   const url = `https://api.lever.co/v0/postings/${company}`;
@@ -32,6 +33,13 @@ const processLeverJobs = async (company) => {
               source: "lever",
               location: job.categories?.location || "N/A",
               applyUrl: job.hostedUrl,
+              category: deriveJobCategory({
+                title: job.text,
+                company,
+                source: "lever",
+                location: job.categories?.location || "N/A",
+                requiredSkills: [],
+              }),
               isActive: true,
               lastFetchedAt: new Date(),
               updatedAt: new Date()

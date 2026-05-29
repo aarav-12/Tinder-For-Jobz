@@ -1,5 +1,6 @@
 const Swipe = require("../models/Swipe");
 const { redisClient } = require("../config/redisClient");
+const { recordBehavior } = require("../services/behaviorService");
 
 const swipeJob = async (req, res) => {
   try {
@@ -24,6 +25,19 @@ const swipeJob = async (req, res) => {
         setDefaultsOnInsert: true
       }
     );
+
+      if (action === "like") {
+        try {
+          await recordBehavior({
+            userId: candidateId,
+            postId: jobId,
+            action: "like",
+            duration: 0,
+          });
+        } catch (error) {
+          console.error("Behavior tracking failed for like:", error.message || error);
+        }
+      }
 
     const swipeKey = `swipes:${candidateId.toString()}`;
 

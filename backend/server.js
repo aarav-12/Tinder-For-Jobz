@@ -9,10 +9,15 @@ const jobRoutes = require("./routes/jobRoutes");
 const ragRoutes = require("./src/routes/ragRoutes");
 const ingestionRoutes = require("./src/routes/ingestionRoutes");
 const connectDB = require("./config/db");
+const authMiddleware = require("./middleware/authMiddleware");
 
 const Task = require("./models/Task");
 const swipeRoutes = require("./routes/swipe");
 const ingestionController = require("./src/controllers/ingestionController");
+const { createBehavior } = require("./controllers/behaviorController");
+const { getInterests } = require("./controllers/userController");
+const { getBehaviorAnalytics } = require("./controllers/analyticsController");
+const { startInterestDecayScheduler } = require("./services/interestDecayService");
 
 
 const app = express();
@@ -57,6 +62,10 @@ app.use("/api/rag", ragRoutes);
 app.use("/api/swipe", swipeRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
+app.post("/behavior", createBehavior);
+app.get("/user/interests", authMiddleware, getInterests);
+app.get("/users/interests", authMiddleware, getInterests);
+app.get("/analytics/behavior", getBehaviorAnalytics);
 
 // Explicit routes (fallback) to ensure endpoints are reachable
 app.post("/api/jobs/bulk", ingestionController.bulkUploadJobs);
@@ -226,6 +235,7 @@ setInterval(() => {
 
 async function startServer() {
   await connectDB();
+  startInterestDecayScheduler();
 
   const port = process.env.PORT || 5000;
 

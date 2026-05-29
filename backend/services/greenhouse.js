@@ -1,5 +1,6 @@
 const axios = require("axios");
 const Job = require("../models/Job");
+const { deriveJobCategory } = require("../utils/jobCategory");
 
 // cleanup function (move it here from worker)
 async function cleanupOldJobs() {
@@ -47,6 +48,13 @@ const processGreenhouseJobs = async (company) => {
                 source: "greenhouse",
                 location: job.location?.name || "N/A",
                 applyUrl: job.absolute_url,
+                category: deriveJobCategory({
+                  title: job.title,
+                  company,
+                  source: "greenhouse",
+                  location: job.location?.name || "N/A",
+                  requiredSkills: [],
+                }),
                 isActive: true,
                 lastFetchedAt: new Date(),
                 updatedAt: new Date()
