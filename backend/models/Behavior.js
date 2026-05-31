@@ -16,7 +16,7 @@ const behaviorSchema = new mongoose.Schema(
     },
     action: {
       type: String,
-      enum: ["view", "like", "save", "share", "comment"],
+      enum: ["view", "like", "save", "apply", "share", "comment"],
       required: true,
       index: true,
     },

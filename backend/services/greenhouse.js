@@ -48,6 +48,7 @@ const processGreenhouseJobs = async (company) => {
                 source: "greenhouse",
                 location: job.location?.name || "N/A",
                 applyUrl: job.absolute_url,
+                description: job.content || "",
                 category: deriveJobCategory({
                   title: job.title,
                   company,

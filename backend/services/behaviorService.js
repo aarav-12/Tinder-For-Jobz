@@ -7,7 +7,7 @@ const {
   upsertUserInterest,
 } = require("./interestService");
 
-const ALLOWED_ACTIONS = ["view", "like", "save", "share", "comment"];
+const ALLOWED_ACTIONS = ["view", "like", "save", "apply", "share", "comment"];
 
 function normalizeDuration(duration) {
   const parsed = Number(duration || 0);

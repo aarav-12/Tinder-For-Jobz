@@ -33,6 +33,7 @@ const processLeverJobs = async (company) => {
               source: "lever",
               location: job.categories?.location || "N/A",
               applyUrl: job.hostedUrl,
+              description: job.descriptionPlain || job.description || "",
               category: deriveJobCategory({
                 title: job.text,
                 company,

@@ -6,6 +6,7 @@ const cors = require("cors");
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const jobRoutes = require("./routes/jobRoutes");
+const matchRoutes = require("./routes/matchRoutes");
 const ragRoutes = require("./src/routes/ragRoutes");
 const ingestionRoutes = require("./src/routes/ingestionRoutes");
 const connectDB = require("./config/db");
@@ -58,6 +59,7 @@ app.use((err, req, res, next) => {
 // ROUTES
 app.use("/api/jobs", ingestionRoutes); // → POST /api/jobs/bulk
 app.use("/api/jobs", jobRoutes);       // → GET /api/jobs
+app.use("/api/matches", matchRoutes);
 app.use("/api/rag", ragRoutes);
 app.use("/api/swipe", swipeRoutes);
 app.use("/users", userRoutes);

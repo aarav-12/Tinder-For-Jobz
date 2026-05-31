@@ -67,4 +67,18 @@ router.get("/", rateLimiter, async (req, res) => {
   }
 });
 
+router.get("/:id", async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id).lean();
+
+    if (!job) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    res.json(job);
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Invalid job id" });
+  }
+});
+
 module.exports = router;

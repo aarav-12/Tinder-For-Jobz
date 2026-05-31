@@ -7,9 +7,29 @@ const userSchema = new mongoose.Schema({
     unique: true
   },
 
+  name: {
+    type: String,
+    default: ""
+  },
+
   passwordHash: {
     type: String,
     required: true
+  },
+
+  role: {
+    type: String,
+    default: ""
+  },
+
+  location: {
+    type: String,
+    default: ""
+  },
+
+  yearsExperience: {
+    type: Number,
+    default: 0
   },
 
   skills: {
@@ -20,6 +40,25 @@ const userSchema = new mongoose.Schema({
   experienceLevel: {
     type: String,
     default: "junior"
+  },
+
+  resume: {
+    filename: {
+      type: String,
+      default: ""
+    },
+    contentType: {
+      type: String,
+      default: ""
+    },
+    analyzedAt: {
+      type: Date,
+      default: null
+    },
+    analysis: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    }
   },
 
   createdAt: {

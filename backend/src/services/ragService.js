@@ -54,9 +54,49 @@ const embedJob = async ({ job_id, title, skills, description, metadata }) => {
   return response.data;
 };
 
+const scoreJobQuality = async (payload) => {
+  const response = await axios.post(
+    `${ragBaseUrl}/score-job-quality`,
+    payload,
+    { timeout: requestTimeout }
+  );
+
+  return response.data;
+};
+
+const explainMatch = async (payload) => {
+  const response = await axios.post(
+    `${ragBaseUrl}/explain-match`,
+    payload,
+    { timeout: requestTimeout }
+  );
+
+  return response.data;
+};
+
+const getRetrievalStats = async () => {
+  const response = await axios.get(`${ragBaseUrl}/debug/retrieval-stats`, {
+    timeout: 10000,
+  });
+
+  return response.data;
+};
+
+const clearRetrievalCache = async () => {
+  const response = await axios.post(`${ragBaseUrl}/debug/clear-cache`, {}, {
+    timeout: 10000,
+  });
+
+  return response.data;
+};
+
 module.exports = {
   getHealth,
   analyzeResume,
   retrieveJobs,
   embedJob,
+  scoreJobQuality,
+  explainMatch,
+  getRetrievalStats,
+  clearRetrievalCache,
 };

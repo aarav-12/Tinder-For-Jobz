@@ -6,9 +6,13 @@
   "scripts": {
     "start": "node server.js",
     "worker": "node scripts/worker.js",
-    "dev": "nodemon server.js",
+    "dev:api": "nodemon server.js",
+    "dev:python": "cd \"..\\resume rag\" && \"..\\.venv\\Scripts\\python.exe\" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:python\"",
+    "dev:full": "concurrently \"npm run dev:api\" \"npm run dev:python\" \"npm run worker\"",
     "dev:with-worker": "concurrently \"nodemon server.js\" \"node scripts/worker.js\"",
-    "dev:clean": "node scripts/devClean.js && npm run dev"
+    "dev:clean": "node scripts/devClean.js && npm run dev",
+    "test:resume": "node scripts/testResume.js"
   },
   "_notes": {
     "dev": "server only (worker temporarily disabled)",
